@@ -1,0 +1,40 @@
+# ----- EIB Builder Image -----
+  FROM golang:1.22.2-bullseye
+
+  # Dependency uses by line
+  # 1. Podman Go library
+  RUN apt-get update && apt-get install -y libgpgme-dev libdevmapper-dev libbtrfs-dev
+  
+  WORKDIR /src
+  
+  COPY go.mod go.sum ./
+  COPY ./cmd ./cmd
+  COPY ./pkg ./pkg
+  
+  RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
+      --mount=type=cache,id=gobuild,target=/root/.cache/go-build \
+      go build ./cmd/eib
+  # download hauler helm and nm-configurator
+  ENV HAULER_VERSION=1.0.2
+  RUN mkdir -p /tmp/hauler && cd /tmp/hauler && \
+     curl -sL https://github.com/rancherfederal/hauler/releases/download/v${HAULER_VERSION}/hauler_${HAULER_VERSION}_`go env GOOS`_`go env GOARCH`.tar.gz | tar xz && \
+     ./hauler version
+  ENV NMC_VERSION=0.2.3
+  RUN mkdir -p /tmp/nm-configurator && cd /tmp/nm-configurator && \
+      wget https://github.com/suse-edge/nm-configurator/releases/download/v${NMC_VERSION}/nmc-linux-aarch64 -O nmc && chmod +x nmc && \
+      ./nmc --version
+  ENV HELM_VERSION=3.14.4
+  RUN mkdir -p /tmp/helm && cd /tmp/helm && \
+      curl -sL https://get.helm.sh/helm-v${HELM_VERSION}-`go env GOOS`-`go env GOARCH`.tar.gz | tar xz --strip-components=1 -C . && \
+      ./helm version
+  FROM ubuntu:23.10
+  RUN apt-get update && \
+      apt-get install -y xorriso guestfish libgpgme-dev libdevmapper-dev libbtrfs-dev linux-image-generic podman zfsutils-linux pigz python3-createrepo-c && \
+      ln -s /usr/bin/createrepo_c /usr/bin/createrepo
+  
+  COPY --from=0 /src/eib /bin/eib
+  COPY --from=0 /tmp/hauler/hauler /bin/hauler
+  COPY --from=0 /tmp/nm-configurator/nmc /bin/nmc
+  COPY --from=0 /tmp/helm/helm /bin/helm
+  
+  ENTRYPOINT ["/bin/eib"]
